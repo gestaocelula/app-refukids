@@ -1,4 +1,4 @@
-name: Compilar APK Refúkids
+name: Compilar APK Refúkids (Flutter Nativo)
 
 on:
   push:
@@ -10,13 +10,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Baixar codigo
+      - name: Baixar codigo do repositorio
         uses: actions/checkout@v4
-
-      - name: Configurar Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
 
       - name: Configurar Java JDK
         uses: actions/setup-java@v4
@@ -24,24 +19,24 @@ jobs:
           distribution: "temurin"
           java-version: "17"
 
-      - name: Configurar Flutter
+      - name: Configurar Flutter SDK
         uses: subosito/flutter-action@v2
         with:
           flutter-version: "3.24.3"
           channel: "stable"
           cache: true
 
-      - name: Instalar Flet e dependencias
+      - name: Gerar estrutura nativa e instalar pacotes
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          flutter create --org com.refukids --project-name app_refukids .
+          flutter pub add image_picker sqflite path url_launcher
 
-      - name: Gerar APK
+      - name: Compilar APK Release
         run: |
-          yes | flet build apk --verbose
+          flutter build apk --release
 
       - name: Disponibilizar APK para download
         uses: actions/upload-artifact@v4
         with:
           name: refukids-app
-          path: build/apk/*.apk
+          path: build/app/outputs/flutter-apk/app-release.apk
