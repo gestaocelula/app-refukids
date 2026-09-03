@@ -1,9 +1,10 @@
 import flet as ft
 import sqlite3
 import random
+import urllib.parse
 
 # ==========================================
-# CONFIGURAÇÃO DO BANCO DE DADOS
+# BANCO DE DADOS LOCAL
 # ==========================================
 def inicializar_banco():
     conn = sqlite3.connect("refukids.db")
@@ -41,73 +42,75 @@ def main(page: ft.Page):
     inicializar_banco()
 
     page.title = "Refúkids"
-    page.theme_mode = ft.ThemeMode.DARK
+    page.theme_mode = ft.ThemeMode.LIGHT
     page.horizontal_alignment = "center"
     page.scroll = "auto"
     
     # Variáveis de Estado
-    escala_sala = ["Nenhuma"]
+    escala_sala = ["Refubabies"]
     sala_travada = [False]
     caminho_foto_atual = [None]
-    crianca_selecionada_id = [None]
+    crianca_ativa = [None]
+    dados_ultimo_cadastro = {}
     modo_foto_saida = [False]
 
+    # Função auxiliar para limpar e padronizar número do WhatsApp brasileiro
+    def limpar_numero(telefone):
+        digitos = ''.join(filter(str.isdigit, str(telefone)))
+        if len(digitos) in [10, 11] and not digitos.startswith("55"):
+            return f"55{digitos}"
+        return digitos
+
     # ==========================================
-    # CÂMERA REAL DO CELULAR (FILE PICKER)
+    # CÂMERA DO APARELHO (FILEPICKER)
     # ==========================================
     def foto_selecionada(e: ft.FilePickerResultEvent):
         if e.files and len(e.files) > 0:
             caminho_obtido = e.files[0].path
             if modo_foto_saida[0]:
-                finalizar_entrega_com_foto(caminho_obtido)
+                finalizar_entrega(caminho_obtido)
             else:
                 caminho_foto_atual[0] = caminho_obtido
-                btn_foto.content = ft.Text("Foto OK ✔️")
+                btn_foto.content = ft.Text("Foto OK ✔️", color="white")
                 btn_foto.bgcolor = "green"
-                btn_foto.color = "white"
                 page.update()
 
     seletor_camera = ft.FilePicker(on_result=foto_selecionada)
     page.overlay.append(seletor_camera)
 
-    def acionar_camera_entrada(e):
+    def abrir_camera_entrada(e):
         modo_foto_saida[0] = False
-        seletor_camera.pick_files(
-            allow_multiple=False,
-            file_type=ft.FilePickerFileType.IMAGE
-        )
+        seletor_camera.pick_files(allow_multiple=False, file_type=ft.FilePickerFileType.IMAGE)
 
     # ==========================================
-    # BOTÃO E DIÁLOGOS DE SALAS
+    # SELETOR DE SALAS E ENCERRAMENTO
     # ==========================================
-    texto_botao_sala = ft.Text("Salas: Nenhuma", size=12, weight="bold")
+    texto_botao_sala = ft.Text(f"👥 {escala_sala[0]}", size=12, weight="bold")
 
     def mudar_sala(nova_sala):
         escala_sala[0] = nova_sala
-        texto_botao_sala.value = f"Sala: {nova_sala}"
+        texto_botao_sala.value = f"👥 {nova_sala}"
         dialogo_salas.open = False
+        carregar_listagem()
         page.update()
 
     def executar_encerramento():
         sala_atual = escala_sala[0]
-        if sala_atual != "Nenhuma":
-            conn = sqlite3.connect("refukids.db")
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM criancas WHERE sala = ?", (sala_atual,))
-            conn.commit()
-            conn.close()
+        conn = sqlite3.connect("refukids.db")
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM criancas WHERE sala = ?", (sala_atual,))
+        conn.commit()
+        conn.close()
 
         dialogo_confirmar_encerramento.open = False
         dialogo_salas.open = False
-        escala_sala[0] = "Nenhuma"
         sala_travada[0] = False
-        texto_botao_sala.value = "Salas: Nenhuma"
         carregar_listagem()
         page.update()
 
     dialogo_confirmar_encerramento = ft.AlertDialog(
         title=ft.Text("⚠️ Encerrar Sala"),
-        content=ft.Text("Tem certeza que deseja apagar todos os registros desta sala? Ação irreversível."),
+        content=ft.Text("Tem certeza que deseja apagar todos os registros desta sala? Esta ação não pode ser desfeita!"),
         actions=[
             ft.TextButton("CANCELAR", on_click=lambda e: setattr(dialogo_confirmar_encerramento, 'open', False) or page.update()),
             ft.ElevatedButton("SIM, APAGAR", bgcolor="red", color="white", on_click=lambda e: executar_encerramento()),
@@ -134,7 +137,8 @@ def main(page: ft.Page):
     def tentar_abrir_menu_salas(e):
         if sala_travada[0]:
             dialogo_sucesso.title = ft.Text("Sala Bloqueada")
-            dialogo_sucesso.content = ft.Text("A sala já está em andamento. Para trocar, é necessário 'Encerrar sala'.")
+            dialogo_sucesso.content = ft.Text("A sala já está em andamento. Para trocar, use 'Encerrar sala'.")
+            dialogo_sucesso.actions = [ft.TextButton("OK", on_click=lambda e: setattr(dialogo_sucesso, 'open', False) or page.update())]
             dialogo_sucesso.open = True
             page.update()
         else:
@@ -142,159 +146,76 @@ def main(page: ft.Page):
             page.update()
 
     # ==========================================
-    # BARRA SUPERIOR NATIVA (APPBAR - NÃO COLA NO NOTCH)
+    # BARRA SUPERIOR (APPBAR)
     # ==========================================
+    botao_acao_sala = ft.Container(
+        content=ft.OutlinedButton(
+            content=texto_botao_sala,
+            on_click=tentar_abrir_menu_salas
+        ),
+        padding=ft.padding.only(right=15)
+    )
+
     page.app_bar = ft.AppBar(
-        leading=ft.Icon(ft.Icons.CHILD_CARE),
+        leading=ft.Icon(ft.Icons.FACE, color="pink"),
         leading_width=40,
-        title=ft.Text("Refúkids", weight="bold"),
+        title=ft.Text("Adicionar", weight="bold"),
         center_title=False,
-        actions=[
-            ft.Container(
-                content=ft.OutlinedButton(
-                    content=texto_botao_sala,
-                    on_click=tentar_abrir_menu_salas
-                ),
-                padding=ft.padding.only(right=15)
-            )
-        ]
+        actions=[botao_acao_sala],
+        bgcolor="white"
     )
 
     # ==========================================
-    # CAMPOS DO FORMULÁRIO (ADICIONAR)
+    # FORMULÁRIO (TELA ADICIONAR)
     # ==========================================
-    campo_nome_crianca = ft.TextField(label="Nome da criança", width=320, border_radius=8)
-    campo_nome_responsavel = ft.TextField(label="Nome do responsável", width=320, border_radius=8)
-    campo_wpp_responsavel = ft.TextField(label="Wpp do responsável", width=320, border_radius=8, keyboard_type="phone")
-
-    btn_foto = ft.ElevatedButton(
-        content=ft.Text("Tirar foto da entrada"), 
+    btn_foto = ft.OutlinedButton(
+        content=ft.Text("Tirar foto", color="black"), 
         width=320, 
-        height=50,
-        on_click=acionar_camera_entrada
+        height=45,
+        on_click=abrir_camera_entrada
     )
+    campo_nome_crianca = ft.TextField(label="Nome da criança", width=320, border_radius=6)
+    campo_nome_responsavel = ft.TextField(label="Nome do responsável", width=320, border_radius=6)
+    campo_wpp_responsavel = ft.TextField(label="Wpp do responsável", width=320, border_radius=6, keyboard_type="phone")
 
     # ==========================================
-    # DIÁLOGOS DE ENTREGA E DETALHES
+    # SUCESSO & WHATSAPP
     # ==========================================
-    def finalizar_entrega_com_foto(caminho_foto):
-        c_id = crianca_selecionada_id[0]
-        conn = sqlite3.connect("refukids.db")
-        cursor = conn.cursor()
-        cursor.execute("UPDATE criancas SET status_entregue = 'Sim', foto_saida = ? WHERE id = ?", (caminho_foto, c_id))
-        conn.commit()
-        conn.close()
-        carregar_listagem(campo_pesquisa.value)
+    def fechar_e_limpar_formulario(e=None):
+        dialogo_sucesso.open = False
+        campo_nome_crianca.value = ""
+        campo_nome_responsavel.value = ""
+        campo_wpp_responsavel.value = ""
+        caminho_foto_atual[0] = None
+        btn_foto.content = ft.Text("Tirar foto", color="black")
+        btn_foto.bgcolor = None
+        carregar_listagem()
         page.update()
 
-    def confirmar_entrega_sem_foto():
-        finalizar_entrega_com_foto(None)
-        dialogo_entrega.open = False
-        page.update()
+    def compartilhar_whatsapp(e=None):
+        dados = dados_ultimo_cadastro
+        msg = (
+            f"Ola {dados.get('responsavel', '')}\n"
+            f"Aqui é o tio(a) da Refukids, estamos muito felizes de ter sua criança cultuando aqui conosco.\n\n"
+            f"Sala: {dados.get('sala', '')}\n"
+            f"Nome: {dados.get('crianca', '')}\n"
+            f"Número: {dados.get('id', '')}\n"
+            f"Senha: {dados.get('senha', '')}\n\n"
+            f"Lembramos que é importante que ao final do culto Você venha buscar sua criança aqui na sala, e não terceiros.\n\n"
+            f"Deus abençoe seu culto."
+        )
+        numero = limpar_numero(dados.get('whatsapp', ''))
+        texto_url = urllib.parse.quote(msg)
+        page.launch_url(f"https://wa.me/{numero}?text={texto_url}")
+        fechar_e_limpar_formulario()
 
-    def confirmar_entrega_com_camera():
-        dialogo_entrega.open = False
-        page.update()
-        modo_foto_saida[0] = True
-        seletor_camera.pick_files(allow_multiple=False, file_type=ft.FilePickerFileType.IMAGE)
-
-    dialogo_entrega = ft.AlertDialog(
-        title=ft.Text("Entregar criança"),
-        content=ft.Text("Deseja bater uma foto do responsável que buscou?"),
-        actions=[
-            ft.TextButton("NÃO", on_click=lambda e: confirmar_entrega_sem_foto()),
-            ft.TextButton("SIM", on_click=lambda e: confirmar_entrega_com_camera()),
-        ]
-    )
-
-    dialogo_detalhes = ft.AlertDialog(
-        title=ft.Text("Detalhes da Criança"),
-        content=ft.Column([], tight=True),
-        actions=[ft.TextButton("FECHAR", on_click=lambda e: setattr(dialogo_detalhes, 'open', False) or page.update())]
-    )
-
-    def abrir_detalhes(c_id, nome_c, nome_r, wpp, senha, sala, status):
-        crianca_selecionada_id[0] = c_id
-        botoes = [ft.TextButton("FECHAR", on_click=lambda e: setattr(dialogo_detalhes, 'open', False) or page.update())]
-        
-        if status == 'Não':
-            botoes.insert(0, ft.ElevatedButton("Entregar criança", on_click=lambda e: setattr(dialogo_detalhes, 'open', False) or setattr(dialogo_entrega, 'open', True) or page.update()))
-
-        dialogo_detalhes.actions = botoes
-        dialogo_detalhes.content = ft.Column([
-            ft.Text(f"#{c_id} - {nome_c}", weight="bold", size=18),
-            ft.Text(f"Sala: {sala}"),
-            ft.Text(f"Responsável: {nome_r}"),
-            ft.Text(f"WhatsApp: {wpp}"),
-            ft.Text(f"Senha de Retirada: {senha}", color="blue", weight="bold"),
-            ft.Divider(),
-            ft.Text(f"Status Entregue: {status}", weight="bold", color="green" if status == 'Sim' else "red")
-        ], tight=True)
-        dialogo_detalhes.open = True
-        page.update()
-
-    # ==========================================
-    # TELA DE LISTAGEM E PESQUISA
-    # ==========================================
-    container_lista = ft.Column(horizontal_alignment="center", spacing=10)
-
-    def carregar_listagem(termo_busca=""):
-        container_lista.controls.clear()
-        conn = sqlite3.connect("refukids.db")
-        cursor = conn.cursor()
-        
-        if termo_busca:
-            cursor.execute('''
-                SELECT id, nome_crianca, nome_responsavel, whatsapp, senha, sala, status_entregue 
-                FROM criancas 
-                WHERE nome_crianca LIKE ? OR nome_responsavel LIKE ?
-            ''', (f'%{termo_busca}%', f'%{termo_busca}%'))
-        else:
-            cursor.execute('SELECT id, nome_crianca, nome_responsavel, whatsapp, senha, sala, status_entregue FROM criancas')
-            
-        registros = cursor.fetchall()
-        conn.close()
-
-        if not registros:
-            container_lista.controls.append(ft.Text("Nenhuma criança listada", color="grey"))
-        else:
-            for reg in registros:
-                c_id, nome_c, nome_r, wpp, senha, sala, status = reg
-                card = ft.Container(
-                    content=ft.Column([
-                        ft.Row([
-                            ft.Text(f"#{c_id} - {nome_c}", weight="bold", size=16),
-                            ft.Text(f"[{sala}]", size=12, color="grey")
-                        ], alignment="spaceBetween"),
-                        ft.Text(f"Responsável: {nome_r}"),
-                        ft.Row([
-                            ft.Text(f"Senha: {senha}", color="blue", weight="bold"),
-                            ft.Text(f"Entregue: {status}", color="green" if status == 'Sim' else "orange", weight="bold")
-                        ], alignment="spaceBetween")
-                    ]),
-                    padding=15,
-                    width=320,
-                    border_radius=8,
-                    bgcolor="white24",
-                    on_click=lambda e, cid=c_id, nc=nome_c, nr=nome_r, wp=wpp, sn=senha, sl=sala, st=status: abrir_detalhes(cid, nc, nr, wp, sn, sl, st)
-                )
-                container_lista.controls.append(card)
-        page.update()
-
-    campo_pesquisa = ft.TextField(
-        label="Pesquisar por nome...",
-        width=320,
-        border_radius=8,
-        on_change=lambda e: carregar_listagem(e.control.value)
-    )
-
-    # ==========================================
-    # SALVAMENTO E FEEDBACK
-    # ==========================================
     dialogo_sucesso = ft.AlertDialog(
-        title=ft.Text("Sucesso"),
-        content=ft.Text(""), 
-        actions=[ft.TextButton("FECHAR", on_click=lambda e: setattr(dialogo_sucesso, 'open', False) or page.update())]
+        title=ft.Text("Sucesso", weight="bold"),
+        content=ft.Text(""),
+        actions=[
+            ft.TextButton("NÃO", on_click=fechar_e_limpar_formulario),
+            ft.TextButton("COMPARTILHAR", on_click=compartilhar_whatsapp),
+        ]
     )
 
     def salvar_dados(e):
@@ -304,14 +225,7 @@ def main(page: ft.Page):
         wpp = campo_wpp_responsavel.value
         foto = caminho_foto_atual[0]
         
-        if sala == "Nenhuma":
-            dialogo_sucesso.title = ft.Text("Atenção")
-            dialogo_sucesso.content = ft.Text("Selecione uma sala no canto superior antes de cadastrar!")
-            dialogo_sucesso.open = True
-            page.update()
-            return
-
-        if not nome_c:
+        if not nome_c or not nome_r:
             return
 
         senha = str(random.randint(1000, 9999))
@@ -325,76 +239,273 @@ def main(page: ft.Page):
         numero_crianca = cursor.lastrowid 
         conn.commit()
         conn.close()
-        
-        # Trava a sala após o primeiro cadastro do turno
+
         sala_travada[0] = True
         
-        dialogo_sucesso.title = ft.Text("Sucesso")
-        dialogo_sucesso.content = ft.Text(f"Criança nº {numero_crianca} cadastrada com sucesso! Senha: {senha}")
+        dados_ultimo_cadastro.clear()
+        dados_ultimo_cadastro.update({
+            "id": numero_crianca,
+            "crianca": nome_c,
+            "responsavel": nome_r,
+            "whatsapp": wpp,
+            "senha": senha,
+            "sala": sala
+        })
+
+        dialogo_sucesso.title = ft.Text("Sucesso", weight="bold")
+        dialogo_sucesso.content = ft.Text(f"Crianca nº {numero_crianca} cadastrada com sucesso\ncom senha: {senha}")
+        dialogo_sucesso.actions = [
+            ft.TextButton("NÃO", on_click=fechar_e_limpar_formulario),
+            ft.TextButton("COMPARTILHAR", on_click=compartilhar_whatsapp),
+        ]
         dialogo_sucesso.open = True
-        
-        campo_nome_crianca.value = ""
-        campo_nome_responsavel.value = ""
-        campo_wpp_responsavel.value = ""
-        caminho_foto_atual[0] = None
-        btn_foto.content = ft.Text("Tirar foto da entrada")
-        btn_foto.bgcolor = None
-        btn_foto.color = None
-        
+        page.update()
+
+    # ==========================================
+    # TELA DE DETALHES DA CRIANÇA
+    # ==========================================
+    imagem_detalhe = ft.Image(width=340, height=220, fit=ft.ImageFit.COVER, border_radius=8)
+    txt_detalhe_numero = ft.Text("", size=16, weight="bold")
+    txt_detalhe_senha = ft.Text("", size=16, weight="bold")
+    txt_detalhe_nome = ft.Text("", size=16, weight="bold")
+    txt_detalhe_resp = ft.Text("", size=16, weight="bold")
+    txt_detalhe_status = ft.Text("", size=16, weight="bold")
+
+    def finalizar_entrega(foto_saida=None):
+        c = crianca_ativa[0]
+        if not c:
+            return
+        conn = sqlite3.connect("refukids.db")
+        cursor = conn.cursor()
+        cursor.execute("UPDATE criancas SET status_entregue = 'Sim', foto_saida = ? WHERE id = ?", (foto_saida, c['id']))
+        conn.commit()
+        conn.close()
+
+        dialogo_entrega.open = False
+        c['status'] = 'Sim'
+        txt_detalhe_status.value = "Sim"
+        btn_entregar.visible = False
         carregar_listagem()
         page.update()
 
-    # Registra diálogos
-    page.overlay.extend([dialogo_sucesso, dialogo_detalhes, dialogo_entrega, dialogo_salas, dialogo_confirmar_encerramento])
+    def confirmar_entrega_com_foto(e):
+        dialogo_entrega.open = False
+        page.update()
+        modo_foto_saida[0] = True
+        seletor_camera.pick_files(allow_multiple=False, file_type=ft.FilePickerFileType.IMAGE)
+
+    dialogo_entrega = ft.AlertDialog(
+        title=ft.Text("Entregar criança"),
+        content=ft.Text("Deseja bater uma foto do responsável que buscou?"),
+        actions=[
+            ft.TextButton("NÃO", on_click=lambda e: finalizar_entrega(None)),
+            ft.TextButton("SIM", on_click=confirmar_entrega_com_foto),
+        ]
+    )
+
+    btn_entregar = ft.OutlinedButton(
+        content=ft.Row([ft.Icon(ft.Icons.HANDSHAKE_OUTLINED, color="black"), ft.Text("Entregar criança", color="black")], alignment="center"),
+        width=340, height=45,
+        on_click=lambda e: setattr(dialogo_entrega, 'open', True) or page.update()
+    )
+
+    btn_ligar = ft.OutlinedButton(
+        content=ft.Row([ft.Icon(ft.Icons.PHONE, color="black"), ft.Text("Ligar para o Responsável", color="black")], alignment="center"),
+        width=340, height=45,
+        on_click=lambda e: page.launch_url(f"tel:{limpar_numero(crianca_ativa[0]['whatsapp'])}")
+    )
+
+    btn_wpp = ft.OutlinedButton(
+        content=ft.Row([ft.Icon(ft.Icons.CHAT_OUTLINED, color="black"), ft.Text("Whatsapp do Responsável", color="black")], alignment="center"),
+        width=340, height=45,
+        on_click=lambda e: page.launch_url(f"https://wa.me/{limpar_numero(crianca_ativa[0]['whatsapp'])}")
+    )
+
+    def voltar_para_listagem(e):
+        tela_detalhes.visible = False
+        tela_listagem.visible = True
+        page.app_bar.leading = ft.Icon(ft.Icons.GRID_VIEW, color="red")
+        page.app_bar.title = ft.Text("Listagem", weight="bold")
+        page.navigation_bar.visible = True
+        page.update()
+
+    tela_detalhes = ft.Column(
+        visible=False,
+        horizontal_alignment="center",
+        controls=[
+            ft.Container(height=5),
+            imagem_detalhe,
+            ft.Container(height=10),
+            ft.Container(
+                width=340,
+                content=ft.Column([
+                    ft.Text("Número:", color="grey", size=13),
+                    txt_detalhe_numero,
+                    ft.Text("Senha:", color="grey", size=13),
+                    txt_detalhe_senha,
+                    ft.Text("Nome:", color="grey", size=13),
+                    txt_detalhe_nome,
+                    ft.Text("Responsável:", color="grey", size=13),
+                    txt_detalhe_resp,
+                    ft.Text("Entregue:", color="grey", size=13),
+                    txt_detalhe_status,
+                ], spacing=4)
+            ),
+            ft.Container(height=15),
+            btn_entregar,
+            btn_ligar,
+            btn_wpp,
+            ft.Container(height=20),
+        ]
+    )
+
+    def abrir_tela_detalhes(c_id, nome, resp, wpp, senha, sala, foto, status):
+        crianca_ativa[0] = {
+            "id": c_id, "nome": nome, "responsavel": resp, 
+            "whatsapp": wpp, "senha": senha, "sala": sala, "status": status
+        }
+        txt_detalhe_numero.value = str(c_id)
+        txt_detalhe_senha.value = str(senha)
+        txt_detalhe_nome.value = nome
+        txt_detalhe_resp.value = resp
+        txt_detalhe_status.value = status
+        
+        if foto:
+            imagem_detalhe.src = foto
+            imagem_detalhe.visible = True
+        else:
+            imagem_detalhe.visible = False
+
+        btn_entregar.visible = (status == "Não")
+
+        tela_listagem.visible = False
+        tela_adicionar.visible = False
+        tela_detalhes.visible = True
+
+        page.app_bar.leading = ft.IconButton(ft.Icons.ARROW_BACK, on_click=voltar_para_listagem)
+        page.app_bar.title = ft.Text(nome, weight="bold")
+        page.navigation_bar.visible = False
+        page.update()
 
     # ==========================================
-    # CORPO DAS TELAS
+    # LISTAGEM EM GRADE (FOTO 374219.JPG)
+    # ==========================================
+    grid_criancas = ft.GridView(
+        expand=True,
+        runs_count=2,
+        max_extent=170,
+        child_aspect_ratio=1.0,
+        spacing=8,
+        run_spacing=8,
+    )
+
+    txt_sem_criancas = ft.Text("Nenhuma criança listada", color="grey", size=14, visible=False)
+
+    def carregar_listagem():
+        grid_criancas.controls.clear()
+        sala_atual = escala_sala[0]
+        
+        conn = sqlite3.connect("refukids.db")
+        cursor = conn.cursor()
+        cursor.execute('SELECT id, nome_crianca, nome_responsavel, whatsapp, senha, sala, foto_entrada, status_entregue FROM criancas WHERE sala = ?', (sala_atual,))
+        registros = cursor.fetchall()
+        conn.close()
+
+        if not registros:
+            txt_sem_criancas.visible = True
+        else:
+            txt_sem_criancas.visible = False
+            for reg in registros:
+                c_id, nome_c, nome_r, wpp, senha, sala, foto, status = reg
+                
+                # Card em imagem com número circular no canto direito
+                card_conteudo = ft.Stack([
+                    ft.Image(
+                        src=foto if foto else "https://via.placeholder.com/150",
+                        fit=ft.ImageFit.COVER,
+                        width=170,
+                        height=170,
+                        border_radius=8
+                    ),
+                    ft.Container(
+                        content=ft.Text(str(c_id), weight="bold", color="black", size=13),
+                        width=28,
+                        height=28,
+                        bgcolor="white",
+                        border_radius=14,
+                        alignment=ft.alignment.center,
+                        right=8,
+                        bottom=8,
+                    )
+                ])
+
+                card = ft.Container(
+                    content=card_conteudo,
+                    on_click=lambda e, cid=c_id, nc=nome_c, nr=nome_r, wp=wpp, sn=senha, sl=sala, ft_p=foto, st=status: abrir_tela_detalhes(cid, nc, nr, wp, sn, sl, ft_p, st)
+                )
+                grid_criancas.controls.append(card)
+        page.update()
+
+    # Registra diálogos
+    page.overlay.extend([dialogo_sucesso, dialogo_entrega, dialogo_salas, dialogo_confirmar_encerramento])
+
+    # ==========================================
+    # ESTRUTURA VISUAL
     # ==========================================
     tela_adicionar = ft.Column(
         horizontal_alignment="center",
         visible=True,
         controls=[
-            ft.Container(height=10),
-            ft.Text("Adicionar Criança", size=22, weight="bold"),
-            ft.Container(height=10),
+            ft.Container(height=15),
             btn_foto, 
-            ft.Container(height=10),
+            ft.Divider(height=20, color="transparent"),
             campo_nome_crianca,
             campo_nome_responsavel,
             campo_wpp_responsavel,
-            ft.Container(height=15),
-            ft.ElevatedButton(content=ft.Text("Salvar"), width=320, height=50, on_click=salvar_dados),
+            ft.Container(height=25),
+            ft.OutlinedButton(
+                content=ft.Text("Salvar", color="black"), 
+                width=320, 
+                height=45, 
+                on_click=salvar_dados
+            ),
         ]
     )
 
     tela_listagem = ft.Column(
         horizontal_alignment="center",
+        expand=True,
         visible=False,
         controls=[
             ft.Container(height=10),
-            campo_pesquisa,
-            ft.Container(height=10),
-            container_lista,
+            txt_sem_criancas,
+            grid_criancas,
         ]
     )
 
     # ==========================================
-    # BARRA DE NAVEGAÇÃO INFERIOR (ESTILO APP ANTIGO)
+    # BARRA DE NAVEGAÇÃO INFERIOR
     # ==========================================
     def mudar_aba(e):
         idx = e.control.selected_index
+        tela_detalhes.visible = False
         if idx == 0:
             carregar_listagem()
             tela_listagem.visible = True
             tela_adicionar.visible = False
+            page.app_bar.leading = ft.Icon(ft.Icons.GRID_VIEW, color="red")
+            page.app_bar.title = ft.Text("Listagem", weight="bold")
         else:
             tela_listagem.visible = False
             tela_adicionar.visible = True
+            page.app_bar.leading = ft.Icon(ft.Icons.FACE, color="pink")
+            page.app_bar.title = ft.Text("Adicionar", weight="bold")
         page.update()
 
     page.navigation_bar = ft.NavigationBar(
         selected_index=1,
         on_change=mudar_aba,
+        bgcolor="white",
         destinations=[
             ft.NavigationDestination(icon=ft.Icons.GRID_VIEW, label="Listagem"),
             ft.NavigationDestination(icon=ft.Icons.EDIT_OUTLINED, label="Adicionar"),
@@ -402,6 +513,6 @@ def main(page: ft.Page):
     )
 
     carregar_listagem()
-    page.add(tela_adicionar, tela_listagem)
+    page.add(tela_adicionar, tela_listagem, tela_detalhes)
 
 ft.app(target=main)
