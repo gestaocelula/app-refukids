@@ -2,10 +2,10 @@ import flet as ft
 import sqlite3
 import random
 import urllib.parse
-import time
+import inspect
 
 # ==========================================
-# BANCO DE DADOS LOCAL E PERSISTÊNCIA
+# BANCO DE DADOS E PERSISTÊNCIA
 # ==========================================
 def inicializar_banco():
     conn = sqlite3.connect("refukids.db")
@@ -60,21 +60,37 @@ def salvar_configuracao(chave, valor):
     conn.commit()
     conn.close()
 
+def detectar_sala_ativa():
+    # 1. Verifica se já há uma configuração salva
+    salva = obter_configuracao("sala_atual", "")
+    if salva:
+        return salva
+    
+    # 2. Se não houver, busca a sala da última criança cadastrada
+    conn = sqlite3.connect("refukids.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT sala FROM criancas ORDER BY id DESC LIMIT 1")
+    linha = cursor.fetchone()
+    conn.close()
+    if linha and linha[0]:
+        return linha[0]
+        
+    return "Refubabies"
+
 def main(page: ft.Page):
     inicializar_banco()
 
     page.title = "Refúkids"
     page.theme_mode = ft.ThemeMode.LIGHT
     page.horizontal_alignment = "center"
-    page.scroll = "auto"
     
-    sala_salva = obter_configuracao("sala_atual", "Refubabies")
-    escala_sala = [sala_salva]
+    # Recupera estado salvo
+    escala_sala = [detectar_sala_ativa()]
+    aba_atual = [int(obter_configuracao("aba_atual", "0"))] # 0: Listagem, 1: Adicionar
     caminho_foto_atual = [None]
     crianca_ativa = [None]
     dados_ultimo_cadastro = {}
     modo_foto_saida = [False]
-    ultimo_clique_voltar = [0.0]
 
     def verificar_sala_em_andamento():
         conn = sqlite3.connect("refukids.db")
@@ -112,7 +128,7 @@ def main(page: ft.Page):
         seletor_camera.pick_files(allow_multiple=False, file_type=ft.FilePickerFileType.IMAGE)
 
     # ==========================================
-    # LOGO OFICIAL REFÚKIDS NO TOPO
+    # LOGO OFICIAL
     # ==========================================
     icone_logo = ft.Container(
         content=ft.Image(src="/logo.png", fit=ft.ImageFit.CONTAIN),
@@ -121,8 +137,17 @@ def main(page: ft.Page):
     )
 
     # ==========================================
-    # CONTROLE DE SALAS
+    # DIÁLOGOS DE SAÍDA E SALAS
     # ==========================================
+    dialogo_confirmar_saida = ft.AlertDialog(
+        title=ft.Text("Sair do Refúkids"),
+        content=ft.Text("Deseja realmente fechar o aplicativo?"),
+        actions=[
+            ft.TextButton("NÃO", on_click=lambda e: setattr(dialogo_confirmar_saida, 'open', False) or page.update()),
+            ft.ElevatedButton("SIM, SAIR", bgcolor="red", color="white", on_click=lambda e: page.window.close()),
+        ]
+    )
+
     texto_botao_sala = ft.Text(f"👥 {escala_sala[0]}", size=12, weight="bold")
 
     dialogo_bloqueio = ft.AlertDialog(
@@ -186,9 +211,6 @@ def main(page: ft.Page):
         actions=[ft.TextButton("Cancelar", on_click=lambda e: setattr(dialogo_salas, 'open', False) or page.update())]
     )
 
-    # ==========================================
-    # BARRA SUPERIOR (APPBAR COM LOGO)
-    # ==========================================
     botao_acao_sala = ft.Container(
         content=ft.OutlinedButton(
             content=texto_botao_sala,
@@ -197,10 +219,10 @@ def main(page: ft.Page):
         padding=ft.padding.only(right=15)
     )
 
-    page.app_bar = ft.AppBar(
+    appbar_principal = ft.AppBar(
         leading=icone_logo,
         leading_width=50,
-        title=ft.Text("Adicionar", weight="bold"),
+        title=ft.Text("Listagem" if aba_atual[0] == 0 else "Adicionar", weight="bold"),
         center_title=False,
         actions=[botao_acao_sala],
         bgcolor="white"
@@ -277,6 +299,8 @@ def main(page: ft.Page):
         numero_crianca = cursor.lastrowid 
         conn.commit()
         conn.close()
+
+        salvar_configuracao("sala_atual", sala)
         
         dados_ultimo_cadastro.clear()
         dados_ultimo_cadastro.update({
@@ -353,18 +377,16 @@ def main(page: ft.Page):
         on_click=lambda e: page.launch_url(f"https://wa.me/{limpar_numero(crianca_ativa[0]['whatsapp'])}")
     )
 
-    def voltar_para_listagem(e=None):
-        tela_detalhes.visible = False
-        tela_listagem.visible = True
-        page.app_bar.leading = icone_logo
-        page.app_bar.leading_width = 50
-        page.app_bar.title = ft.Text("Listagem", weight="bold")
-        page.navigation_bar.visible = True
-        page.update()
+    appbar_detalhes = ft.AppBar(
+        leading=ft.IconButton(ft.Icons.ARROW_BACK, on_click=lambda e: page.go("/")),
+        leading_width=40,
+        title=ft.Text("", weight="bold"),
+        bgcolor="white"
+    )
 
-    tela_detalhes = ft.Column(
-        visible=False,
+    tela_detalhes_conteudo = ft.Column(
         horizontal_alignment="center",
+        scroll="auto",
         controls=[
             ft.Container(height=5),
             imagem_detalhe,
@@ -388,7 +410,7 @@ def main(page: ft.Page):
             btn_entregar,
             btn_ligar,
             btn_wpp,
-            ft.Container(height=20),
+            ft.Container(height=25),
         ]
     )
 
@@ -402,6 +424,7 @@ def main(page: ft.Page):
         txt_detalhe_nome.value = nome
         txt_detalhe_resp.value = resp
         txt_detalhe_status.value = status
+        appbar_detalhes.title.value = nome
         
         if foto:
             imagem_detalhe.src = foto
@@ -410,16 +433,7 @@ def main(page: ft.Page):
             imagem_detalhe.visible = False
 
         btn_entregar.visible = (status == "Não")
-
-        tela_listagem.visible = False
-        tela_adicionar.visible = False
-        tela_detalhes.visible = True
-
-        page.app_bar.leading = ft.IconButton(ft.Icons.ARROW_BACK, on_click=voltar_para_listagem)
-        page.app_bar.leading_width = 40
-        page.app_bar.title = ft.Text(nome, weight="bold")
-        page.navigation_bar.visible = False
-        page.update()
+        page.go("/detalhes")
 
     # ==========================================
     # LISTAGEM EM GRADE
@@ -478,14 +492,12 @@ def main(page: ft.Page):
                 grid_criancas.controls.append(card)
         page.update()
 
-    page.overlay.extend([dialogo_sucesso, dialogo_entrega, dialogo_salas, dialogo_confirmar_encerramento, dialogo_bloqueio])
+    page.overlay.extend([dialogo_sucesso, dialogo_entrega, dialogo_salas, dialogo_confirmar_encerramento, dialogo_bloqueio, dialogo_confirmar_saida])
 
-    # ==========================================
-    # CORPO DAS TELAS
-    # ==========================================
-    tela_adicionar = ft.Column(
+    # Telas de Conteúdo
+    container_adicionar = ft.Column(
         horizontal_alignment="center",
-        visible=True,
+        scroll="auto",
         controls=[
             ft.Container(height=15),
             btn_foto, 
@@ -503,10 +515,9 @@ def main(page: ft.Page):
         ]
     )
 
-    tela_listagem = ft.Column(
+    container_listagem = ft.Column(
         horizontal_alignment="center",
         expand=True,
-        visible=False,
         controls=[
             ft.Container(height=10),
             txt_sem_criancas,
@@ -515,27 +526,22 @@ def main(page: ft.Page):
     )
 
     # ==========================================
-    # BARRA DE NAVEGAÇÃO INFERIOR
+    # BARRA DE NAVEGAÇÃO
     # ==========================================
     def mudar_aba(e):
         idx = e.control.selected_index
-        tela_detalhes.visible = False
-        page.app_bar.leading = icone_logo
-        page.app_bar.leading_width = 50
+        aba_atual[0] = idx
+        salvar_configuracao("aba_atual", str(idx))
         
         if idx == 0:
             carregar_listagem()
-            tela_listagem.visible = True
-            tela_adicionar.visible = False
-            page.app_bar.title = ft.Text("Listagem", weight="bold")
+            appbar_principal.title = ft.Text("Listagem", weight="bold")
         else:
-            tela_listagem.visible = False
-            tela_adicionar.visible = True
-            page.app_bar.title = ft.Text("Adicionar", weight="bold")
-        page.update()
+            appbar_principal.title = ft.Text("Adicionar", weight="bold")
+        page.go("/")
 
-    page.navigation_bar = ft.NavigationBar(
-        selected_index=1,
+    barra_navegacao = ft.NavigationBar(
+        selected_index=aba_atual[0],
         on_change=mudar_aba,
         bgcolor="white",
         destinations=[
@@ -545,26 +551,53 @@ def main(page: ft.Page):
     )
 
     # ==========================================
-    # PROTEÇÃO DO BOTÃO VOLTAR (2 TOQUES)
+    # ROTEAMENTO MULTI-VIEW E CONTROLE DO BOTÃO VOLTAR
     # ==========================================
-    def gerenciar_botao_voltar(e):
-        if tela_detalhes.visible:
-            voltar_para_listagem()
-            return
+    def gerenciar_pop_raiz(e=None):
+        dialogo_confirmar_saida.open = True
+        page.update()
 
-        agora = time.time()
-        if agora - ultimo_clique_voltar[0] < 2.0:
-            page.window.close()
-        else:
-            ultimo_clique_voltar[0] = agora
-            page.snack_bar = ft.SnackBar(ft.Text("Pressione voltar novamente para sair"), duration=1800)
-            page.snack_bar.open = True
-            page.update()
+    def gerenciar_rota(e):
+        page.views.clear()
 
-    page.on_view_pop = gerenciar_botao_voltar
+        # Configura a View Principal com proteção contra pop
+        view_principal_kwargs = {
+            "route": "/",
+            "controls": [container_listagem if aba_atual[0] == 0 else container_adicionar],
+            "appbar": appbar_principal,
+            "navigation_bar": barra_navegacao,
+            "horizontal_alignment": "center",
+        }
+
+        # Adiciona proteção nativa caso suportado pela versão do Flet
+        if "can_pop" in inspect.signature(ft.View.__init__).parameters:
+            view_principal_kwargs["can_pop"] = False
+            view_principal_kwargs["on_pop_invoked"] = gerenciar_pop_raiz
+
+        page.views.append(ft.View(**view_principal_kwargs))
+
+        # View de Detalhes da Criança
+        if page.route == "/detalhes":
+            page.views.append(
+                ft.View(
+                    route="/detalhes",
+                    controls=[tela_detalhes_conteudo],
+                    appbar=appbar_detalhes,
+                    horizontal_alignment="center",
+                )
+            )
+
+        page.update()
+
+    def view_pop(e):
+        # Quando arrastar da borda ou clicar na seta voltar em Detalhes, volta limpo para a lista
+        page.views.pop()
+        page.go("/")
+
+    page.on_route_change = gerenciar_rota
+    page.on_view_pop = view_pop
 
     carregar_listagem()
-    page.add(tela_adicionar, tela_listagem, tela_detalhes)
+    page.go("/")
 
-# Registra a pasta assets no motor do Flet
 ft.app(target=main, assets_dir="assets")
