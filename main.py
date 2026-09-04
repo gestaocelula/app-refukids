@@ -2,9 +2,10 @@ import flet as ft
 import sqlite3
 import random
 import urllib.parse
+import time
 
 # ==========================================
-# BANCO DE DADOS LOCAL
+# BANCO DE DADOS LOCAL E PERSISTÊNCIA DE ESTADO
 # ==========================================
 def inicializar_banco():
     conn = sqlite3.connect("refukids.db")
@@ -20,6 +21,12 @@ def inicializar_banco():
             sala TEXT,
             status_entregue TEXT DEFAULT 'Não',
             foto_saida TEXT
+        )
+    ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS configuracoes (
+            chave TEXT PRIMARY KEY,
+            valor TEXT
         )
     ''')
     try:
@@ -38,6 +45,21 @@ def inicializar_banco():
     conn.commit()
     conn.close()
 
+def obter_configuracao(chave, padrao=""):
+    conn = sqlite3.connect("refukids.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT valor FROM configuracoes WHERE chave = ?", (chave,))
+    linha = cursor.fetchone()
+    conn.close()
+    return linha[0] if linha else padrao
+
+def salvar_configuracao(chave, valor):
+    conn = sqlite3.connect("refukids.db")
+    cursor = conn.cursor()
+    cursor.execute("INSERT OR REPLACE INTO configuracoes (chave, valor) VALUES (?, ?)", (chave, valor))
+    conn.commit()
+    conn.close()
+
 def main(page: ft.Page):
     inicializar_banco()
 
@@ -46,15 +68,23 @@ def main(page: ft.Page):
     page.horizontal_alignment = "center"
     page.scroll = "auto"
     
-    # Variáveis de Estado
-    escala_sala = ["Refubabies"]
-    sala_travada = [False]
+    # Recupera a última sala salva no banco de dados (persistência ao reabrir o app)
+    sala_salva = obter_configuracao("sala_atual", "Refubabies")
+    escala_sala = [sala_salva]
     caminho_foto_atual = [None]
     crianca_ativa = [None]
     dados_ultimo_cadastro = {}
     modo_foto_saida = [False]
+    ultimo_clique_voltar = [0.0]
 
-    # Função auxiliar para limpar e padronizar número do WhatsApp brasileiro
+    def verificar_sala_em_andamento():
+        conn = sqlite3.connect("refukids.db")
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM criancas WHERE sala = ?", (escala_sala[0],))
+        total = cursor.fetchone()[0]
+        conn.close()
+        return total > 0
+
     def limpar_numero(telefone):
         digitos = ''.join(filter(str.isdigit, str(telefone)))
         if len(digitos) in [10, 11] and not digitos.startswith("55"):
@@ -83,12 +113,25 @@ def main(page: ft.Page):
         seletor_camera.pick_files(allow_multiple=False, file_type=ft.FilePickerFileType.IMAGE)
 
     # ==========================================
-    # SELETOR DE SALAS E ENCERRAMENTO
+    # CONTROLE DE SALAS E ENCERRAMENTO
     # ==========================================
     texto_botao_sala = ft.Text(f"👥 {escala_sala[0]}", size=12, weight="bold")
 
+    dialogo_bloqueio = ft.AlertDialog(
+        title=ft.Text("Sala em Andamento"),
+        content=ft.Text("Esta sala já possui crianças registradas. Para trocar de sala, encerre a escala atual primeiro."),
+        actions=[ft.TextButton("OK", on_click=lambda e: setattr(dialogo_bloqueio, 'open', False) or page.update())]
+    )
+
     def mudar_sala(nova_sala):
+        if nova_sala != escala_sala[0] and verificar_sala_em_andamento():
+            dialogo_salas.open = False
+            dialogo_bloqueio.open = True
+            page.update()
+            return
+
         escala_sala[0] = nova_sala
+        salvar_configuracao("sala_atual", nova_sala)
         texto_botao_sala.value = f"👥 {nova_sala}"
         dialogo_salas.open = False
         carregar_listagem()
@@ -104,8 +147,9 @@ def main(page: ft.Page):
 
         dialogo_confirmar_encerramento.open = False
         dialogo_salas.open = False
-        sala_travada[0] = False
         carregar_listagem()
+        page.snack_bar = ft.SnackBar(ft.Text(f"Sala {sala_atual} encerrada com sucesso!"))
+        page.snack_bar.open = True
         page.update()
 
     dialogo_confirmar_encerramento = ft.AlertDialog(
@@ -134,24 +178,13 @@ def main(page: ft.Page):
         actions=[ft.TextButton("Cancelar", on_click=lambda e: setattr(dialogo_salas, 'open', False) or page.update())]
     )
 
-    def tentar_abrir_menu_salas(e):
-        if sala_travada[0]:
-            dialogo_sucesso.title = ft.Text("Sala Bloqueada")
-            dialogo_sucesso.content = ft.Text("A sala já está em andamento. Para trocar, use 'Encerrar sala'.")
-            dialogo_sucesso.actions = [ft.TextButton("OK", on_click=lambda e: setattr(dialogo_sucesso, 'open', False) or page.update())]
-            dialogo_sucesso.open = True
-            page.update()
-        else:
-            dialogo_salas.open = True
-            page.update()
-
     # ==========================================
-    # BARRA SUPERIOR (APPBAR)
+    # BARRA SUPERIOR
     # ==========================================
     botao_acao_sala = ft.Container(
         content=ft.OutlinedButton(
             content=texto_botao_sala,
-            on_click=tentar_abrir_menu_salas
+            on_click=lambda e: setattr(dialogo_salas, 'open', True) or page.update()
         ),
         padding=ft.padding.only(right=15)
     )
@@ -166,7 +199,7 @@ def main(page: ft.Page):
     )
 
     # ==========================================
-    # FORMULÁRIO (TELA ADICIONAR)
+    # FORMULÁRIO (ADICIONAR)
     # ==========================================
     btn_foto = ft.OutlinedButton(
         content=ft.Text("Tirar foto", color="black"), 
@@ -178,9 +211,6 @@ def main(page: ft.Page):
     campo_nome_responsavel = ft.TextField(label="Nome do responsável", width=320, border_radius=6)
     campo_wpp_responsavel = ft.TextField(label="Wpp do responsável", width=320, border_radius=6, keyboard_type="phone")
 
-    # ==========================================
-    # SUCESSO & WHATSAPP
-    # ==========================================
     def fechar_e_limpar_formulario(e=None):
         dialogo_sucesso.open = False
         campo_nome_crianca.value = ""
@@ -239,8 +269,6 @@ def main(page: ft.Page):
         numero_crianca = cursor.lastrowid 
         conn.commit()
         conn.close()
-
-        sala_travada[0] = True
         
         dados_ultimo_cadastro.clear()
         dados_ultimo_cadastro.update({
@@ -254,15 +282,11 @@ def main(page: ft.Page):
 
         dialogo_sucesso.title = ft.Text("Sucesso", weight="bold")
         dialogo_sucesso.content = ft.Text(f"Crianca nº {numero_crianca} cadastrada com sucesso\ncom senha: {senha}")
-        dialogo_sucesso.actions = [
-            ft.TextButton("NÃO", on_click=fechar_e_limpar_formulario),
-            ft.TextButton("COMPARTILHAR", on_click=compartilhar_whatsapp),
-        ]
         dialogo_sucesso.open = True
         page.update()
 
     # ==========================================
-    # TELA DE DETALHES DA CRIANÇA
+    # TELA DE DETALHES
     # ==========================================
     imagem_detalhe = ft.Image(width=340, height=220, fit=ft.ImageFit.COVER, border_radius=8)
     txt_detalhe_numero = ft.Text("", size=16, weight="bold")
@@ -321,7 +345,7 @@ def main(page: ft.Page):
         on_click=lambda e: page.launch_url(f"https://wa.me/{limpar_numero(crianca_ativa[0]['whatsapp'])}")
     )
 
-    def voltar_para_listagem(e):
+    def voltar_para_listagem(e=None):
         tela_detalhes.visible = False
         tela_listagem.visible = True
         page.app_bar.leading = ft.Icon(ft.Icons.GRID_VIEW, color="red")
@@ -388,7 +412,7 @@ def main(page: ft.Page):
         page.update()
 
     # ==========================================
-    # LISTAGEM EM GRADE (FOTO 374219.JPG)
+    # LISTAGEM EM GRADE
     # ==========================================
     grid_criancas = ft.GridView(
         expand=True,
@@ -417,8 +441,6 @@ def main(page: ft.Page):
             txt_sem_criancas.visible = False
             for reg in registros:
                 c_id, nome_c, nome_r, wpp, senha, sala, foto, status = reg
-                
-                # Card em imagem com número circular no canto direito
                 card_conteudo = ft.Stack([
                     ft.Image(
                         src=foto if foto else "https://via.placeholder.com/150",
@@ -446,11 +468,11 @@ def main(page: ft.Page):
                 grid_criancas.controls.append(card)
         page.update()
 
-    # Registra diálogos
-    page.overlay.extend([dialogo_sucesso, dialogo_entrega, dialogo_salas, dialogo_confirmar_encerramento])
+    # Registra diálogos no overlay
+    page.overlay.extend([dialogo_sucesso, dialogo_entrega, dialogo_salas, dialogo_confirmar_encerramento, dialogo_bloqueio])
 
     # ==========================================
-    # ESTRUTURA VISUAL
+    # CORPO DAS TELAS
     # ==========================================
     tela_adicionar = ft.Column(
         horizontal_alignment="center",
@@ -511,6 +533,26 @@ def main(page: ft.Page):
             ft.NavigationDestination(icon=ft.Icons.EDIT_OUTLINED, label="Adicionar"),
         ]
     )
+
+    # ==========================================
+    # PROTEÇÃO DO BOTÃO VOLTAR DO ANDROID (2 TOQUES PARA SAIR)
+    # ==========================================
+    def gerenciar_botao_voltar(e):
+        if tela_detalhes.visible:
+            voltar_para_listagem()
+            return
+
+        agora = time.time()
+        if agora - ultimo_clique_voltar[0] < 2.0:
+            # Pressionou 2 vezes em menos de 2 segundos: fecha a janela
+            page.window.close()
+        else:
+            ultimo_clique_voltar[0] = agora
+            page.snack_bar = ft.SnackBar(ft.Text("Pressione voltar novamente para sair"), duration=1800)
+            page.snack_bar.open = True
+            page.update()
+
+    page.on_view_pop = gerenciar_botao_voltar
 
     carregar_listagem()
     page.add(tela_adicionar, tela_listagem, tela_detalhes)
