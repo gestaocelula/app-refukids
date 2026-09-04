@@ -2,6 +2,7 @@ import flet as ft
 import sqlite3
 import random
 import urllib.parse
+import time
 import inspect
 
 # ==========================================
@@ -61,12 +62,9 @@ def salvar_configuracao(chave, valor):
     conn.close()
 
 def detectar_sala_ativa():
-    # 1. Verifica se já há uma configuração salva
     salva = obter_configuracao("sala_atual", "")
     if salva:
         return salva
-    
-    # 2. Se não houver, busca a sala da última criança cadastrada
     conn = sqlite3.connect("refukids.db")
     cursor = conn.cursor()
     cursor.execute("SELECT sala FROM criancas ORDER BY id DESC LIMIT 1")
@@ -74,7 +72,6 @@ def detectar_sala_ativa():
     conn.close()
     if linha and linha[0]:
         return linha[0]
-        
     return "Refubabies"
 
 def main(page: ft.Page):
@@ -84,13 +81,13 @@ def main(page: ft.Page):
     page.theme_mode = ft.ThemeMode.LIGHT
     page.horizontal_alignment = "center"
     
-    # Recupera estado salvo
     escala_sala = [detectar_sala_ativa()]
-    aba_atual = [int(obter_configuracao("aba_atual", "0"))] # 0: Listagem, 1: Adicionar
+    aba_atual = [int(obter_configuracao("aba_atual", "0"))]
     caminho_foto_atual = [None]
     crianca_ativa = [None]
     dados_ultimo_cadastro = {}
     modo_foto_saida = [False]
+    ultimo_clique_voltar = [0.0]
 
     def verificar_sala_em_andamento():
         conn = sqlite3.connect("refukids.db")
@@ -131,46 +128,41 @@ def main(page: ft.Page):
     # LOGO OFICIAL
     # ==========================================
     icone_logo = ft.Container(
-        content=ft.Image(src="/logo.png", fit=ft.ImageFit.CONTAIN),
+        content=ft.Image(
+            src="logo.png", 
+            width=40, 
+            height=40, 
+            fit=ft.ImageFit.CONTAIN
+        ),
         padding=ft.padding.only(left=8),
         alignment=ft.alignment.center
     )
 
     # ==========================================
-    # DIÁLOGOS DE SAÍDA E SALAS
+    # DIÁLOGOS DE SAÍDA E SALAS (AGORA USANDO PAGE.OPEN)
     # ==========================================
-    dialogo_confirmar_saida = ft.AlertDialog(
-        title=ft.Text("Sair do Refúkids"),
-        content=ft.Text("Deseja realmente fechar o aplicativo?"),
-        actions=[
-            ft.TextButton("NÃO", on_click=lambda e: setattr(dialogo_confirmar_saida, 'open', False) or page.update()),
-            ft.ElevatedButton("SIM, SAIR", bgcolor="red", color="white", on_click=lambda e: page.window.close()),
-        ]
-    )
-
     texto_botao_sala = ft.Text(f"👥 {escala_sala[0]}", size=12, weight="bold")
 
     dialogo_bloqueio = ft.AlertDialog(
         title=ft.Text("Sala em Andamento"),
         content=ft.Text("Esta sala já possui crianças registradas. Para trocar de sala, encerre a escala atual primeiro."),
-        actions=[ft.TextButton("OK", on_click=lambda e: setattr(dialogo_bloqueio, 'open', False) or page.update())]
+        actions=[ft.TextButton("OK", on_click=lambda e: page.close(dialogo_bloqueio))]
     )
 
     def mudar_sala(nova_sala):
         if nova_sala != escala_sala[0] and verificar_sala_em_andamento():
-            dialogo_salas.open = False
-            dialogo_bloqueio.open = True
-            page.update()
+            page.close(dialogo_salas)
+            page.open(dialogo_bloqueio)
             return
 
         escala_sala[0] = nova_sala
         salvar_configuracao("sala_atual", nova_sala)
         texto_botao_sala.value = f"👥 {nova_sala}"
-        dialogo_salas.open = False
+        page.close(dialogo_salas)
         carregar_listagem()
         page.update()
 
-    def executar_encerramento():
+    def executar_encerramento(e=None):
         sala_atual = escala_sala[0]
         conn = sqlite3.connect("refukids.db")
         cursor = conn.cursor()
@@ -178,21 +170,22 @@ def main(page: ft.Page):
         conn.commit()
         conn.close()
 
-        dialogo_confirmar_encerramento.open = False
-        dialogo_salas.open = False
+        page.close(dialogo_confirmar_encerramento)
         carregar_listagem()
-        page.snack_bar = ft.SnackBar(ft.Text(f"Sala {sala_atual} encerrada com sucesso!"))
-        page.snack_bar.open = True
-        page.update()
+        page.open(ft.SnackBar(ft.Text(f"Sala {sala_atual} encerrada com sucesso!")))
 
     dialogo_confirmar_encerramento = ft.AlertDialog(
         title=ft.Text("⚠️ Encerrar Sala"),
         content=ft.Text("Tem certeza que deseja apagar todos os registros desta sala? Esta ação não pode ser desfeita!"),
         actions=[
-            ft.TextButton("CANCELAR", on_click=lambda e: setattr(dialogo_confirmar_encerramento, 'open', False) or page.update()),
-            ft.ElevatedButton("SIM, APAGAR", bgcolor="red", color="white", on_click=lambda e: executar_encerramento()),
+            ft.TextButton("CANCELAR", on_click=lambda e: page.close(dialogo_confirmar_encerramento)),
+            ft.ElevatedButton("SIM, APAGAR", bgcolor="red", color="white", on_click=executar_encerramento),
         ]
     )
+
+    def abrir_confirmacao_encerramento(e):
+        page.close(dialogo_salas)
+        page.open(dialogo_confirmar_encerramento)
 
     dialogo_salas = ft.AlertDialog(
         title=ft.Text("Qual sala você está?"),
@@ -204,17 +197,17 @@ def main(page: ft.Page):
             ft.Divider(),
             ft.TextButton(
                 "Encerrar sala", 
-                on_click=lambda e: setattr(dialogo_confirmar_encerramento, 'open', True) or page.update(), 
+                on_click=abrir_confirmacao_encerramento, 
                 style=ft.ButtonStyle(color="red")
             ),
         ], tight=True),
-        actions=[ft.TextButton("Cancelar", on_click=lambda e: setattr(dialogo_salas, 'open', False) or page.update())]
+        actions=[ft.TextButton("Cancelar", on_click=lambda e: page.close(dialogo_salas))]
     )
 
     botao_acao_sala = ft.Container(
         content=ft.OutlinedButton(
             content=texto_botao_sala,
-            on_click=lambda e: setattr(dialogo_salas, 'open', True) or page.update()
+            on_click=lambda e: page.open(dialogo_salas)
         ),
         padding=ft.padding.only(right=15)
     )
@@ -242,7 +235,7 @@ def main(page: ft.Page):
     campo_wpp_responsavel = ft.TextField(label="Wpp do responsável", width=320, border_radius=6, keyboard_type="phone")
 
     def fechar_e_limpar_formulario(e=None):
-        dialogo_sucesso.open = False
+        page.close(dialogo_sucesso)
         campo_nome_crianca.value = ""
         campo_nome_responsavel.value = ""
         campo_wpp_responsavel.value = ""
@@ -312,9 +305,8 @@ def main(page: ft.Page):
             "sala": sala
         })
 
-        dialogo_sucesso.title = ft.Text("Sucesso", weight="bold")
         dialogo_sucesso.content = ft.Text(f"Crianca nº {numero_crianca} cadastrada com sucesso\ncom senha: {senha}")
-        dialogo_sucesso.open = True
+        page.open(dialogo_sucesso)
         page.update()
 
     # ==========================================
@@ -337,7 +329,7 @@ def main(page: ft.Page):
         conn.commit()
         conn.close()
 
-        dialogo_entrega.open = False
+        page.close(dialogo_entrega)
         c['status'] = 'Sim'
         txt_detalhe_status.value = "Sim"
         btn_entregar.visible = False
@@ -345,8 +337,7 @@ def main(page: ft.Page):
         page.update()
 
     def confirmar_entrega_com_foto(e):
-        dialogo_entrega.open = False
-        page.update()
+        page.close(dialogo_entrega)
         modo_foto_saida[0] = True
         seletor_camera.pick_files(allow_multiple=False, file_type=ft.FilePickerFileType.IMAGE)
 
@@ -362,7 +353,7 @@ def main(page: ft.Page):
     btn_entregar = ft.OutlinedButton(
         content=ft.Row([ft.Icon(ft.Icons.HANDSHAKE_OUTLINED, color="black"), ft.Text("Entregar criança", color="black")], alignment="center"),
         width=340, height=45,
-        on_click=lambda e: setattr(dialogo_entrega, 'open', True) or page.update()
+        on_click=lambda e: page.open(dialogo_entrega)
     )
 
     btn_ligar = ft.OutlinedButton(
@@ -492,9 +483,7 @@ def main(page: ft.Page):
                 grid_criancas.controls.append(card)
         page.update()
 
-    page.overlay.extend([dialogo_sucesso, dialogo_entrega, dialogo_salas, dialogo_confirmar_encerramento, dialogo_bloqueio, dialogo_confirmar_saida])
-
-    # Telas de Conteúdo
+    # Telas de Conteúdo Principais
     container_adicionar = ft.Column(
         horizontal_alignment="center",
         scroll="auto",
@@ -551,16 +540,19 @@ def main(page: ft.Page):
     )
 
     # ==========================================
-    # ROTEAMENTO MULTI-VIEW E CONTROLE DO BOTÃO VOLTAR
+    # ROTEAMENTO E CONTROLE DE DOIS TOQUES PARA SAIR
     # ==========================================
     def gerenciar_pop_raiz(e=None):
-        dialogo_confirmar_saida.open = True
-        page.update()
+        agora = time.time()
+        if agora - ultimo_clique_voltar[0] < 2.0:
+            page.window.close()
+        else:
+            ultimo_clique_voltar[0] = agora
+            page.open(ft.SnackBar(ft.Text("Pressione voltar novamente para sair"), duration=1800))
 
     def gerenciar_rota(e):
         page.views.clear()
 
-        # Configura a View Principal com proteção contra pop
         view_principal_kwargs = {
             "route": "/",
             "controls": [container_listagem if aba_atual[0] == 0 else container_adicionar],
@@ -569,14 +561,13 @@ def main(page: ft.Page):
             "horizontal_alignment": "center",
         }
 
-        # Adiciona proteção nativa caso suportado pela versão do Flet
+        # Trava nativa do Flet para não fechar no primeiro deslize
         if "can_pop" in inspect.signature(ft.View.__init__).parameters:
             view_principal_kwargs["can_pop"] = False
             view_principal_kwargs["on_pop_invoked"] = gerenciar_pop_raiz
 
         page.views.append(ft.View(**view_principal_kwargs))
 
-        # View de Detalhes da Criança
         if page.route == "/detalhes":
             page.views.append(
                 ft.View(
@@ -590,8 +581,7 @@ def main(page: ft.Page):
         page.update()
 
     def view_pop(e):
-        # Quando arrastar da borda ou clicar na seta voltar em Detalhes, volta limpo para a lista
-        page.views.pop()
+        # Quando arrasta da borda na tela de detalhes, ele volta para listagem e não sai do app!
         page.go("/")
 
     page.on_route_change = gerenciar_rota
@@ -600,4 +590,5 @@ def main(page: ft.Page):
     carregar_listagem()
     page.go("/")
 
+# Importante: A pasta assets precisa estar declarada aqui!
 ft.app(target=main, assets_dir="assets")
