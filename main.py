@@ -5,7 +5,7 @@ import urllib.parse
 import time
 
 # ==========================================
-# BANCO DE DADOS LOCAL E PERSISTÊNCIA DE ESTADO
+# BANCO DE DADOS LOCAL E PERSISTÊNCIA
 # ==========================================
 def inicializar_banco():
     conn = sqlite3.connect("refukids.db")
@@ -68,7 +68,6 @@ def main(page: ft.Page):
     page.horizontal_alignment = "center"
     page.scroll = "auto"
     
-    # Recupera a última sala salva no banco de dados (persistência ao reabrir o app)
     sala_salva = obter_configuracao("sala_atual", "Refubabies")
     escala_sala = [sala_salva]
     caminho_foto_atual = [None]
@@ -92,7 +91,7 @@ def main(page: ft.Page):
         return digitos
 
     # ==========================================
-    # CÂMERA DO APARELHO (FILEPICKER)
+    # CÂMERA DO APARELHO
     # ==========================================
     def foto_selecionada(e: ft.FilePickerResultEvent):
         if e.files and len(e.files) > 0:
@@ -113,7 +112,16 @@ def main(page: ft.Page):
         seletor_camera.pick_files(allow_multiple=False, file_type=ft.FilePickerFileType.IMAGE)
 
     # ==========================================
-    # CONTROLE DE SALAS E ENCERRAMENTO
+    # LOGO OFICIAL REFÚKIDS NO TOPO
+    # ==========================================
+    icone_logo = ft.Container(
+        content=ft.Image(src="/logo.png", fit=ft.ImageFit.CONTAIN),
+        padding=ft.padding.only(left=8),
+        alignment=ft.alignment.center
+    )
+
+    # ==========================================
+    # CONTROLE DE SALAS
     # ==========================================
     texto_botao_sala = ft.Text(f"👥 {escala_sala[0]}", size=12, weight="bold")
 
@@ -179,7 +187,7 @@ def main(page: ft.Page):
     )
 
     # ==========================================
-    # BARRA SUPERIOR
+    # BARRA SUPERIOR (APPBAR COM LOGO)
     # ==========================================
     botao_acao_sala = ft.Container(
         content=ft.OutlinedButton(
@@ -190,8 +198,8 @@ def main(page: ft.Page):
     )
 
     page.app_bar = ft.AppBar(
-        leading=ft.Icon(ft.Icons.FACE, color="pink"),
-        leading_width=40,
+        leading=icone_logo,
+        leading_width=50,
         title=ft.Text("Adicionar", weight="bold"),
         center_title=False,
         actions=[botao_acao_sala],
@@ -348,7 +356,8 @@ def main(page: ft.Page):
     def voltar_para_listagem(e=None):
         tela_detalhes.visible = False
         tela_listagem.visible = True
-        page.app_bar.leading = ft.Icon(ft.Icons.GRID_VIEW, color="red")
+        page.app_bar.leading = icone_logo
+        page.app_bar.leading_width = 50
         page.app_bar.title = ft.Text("Listagem", weight="bold")
         page.navigation_bar.visible = True
         page.update()
@@ -407,6 +416,7 @@ def main(page: ft.Page):
         tela_detalhes.visible = True
 
         page.app_bar.leading = ft.IconButton(ft.Icons.ARROW_BACK, on_click=voltar_para_listagem)
+        page.app_bar.leading_width = 40
         page.app_bar.title = ft.Text(nome, weight="bold")
         page.navigation_bar.visible = False
         page.update()
@@ -468,7 +478,6 @@ def main(page: ft.Page):
                 grid_criancas.controls.append(card)
         page.update()
 
-    # Registra diálogos no overlay
     page.overlay.extend([dialogo_sucesso, dialogo_entrega, dialogo_salas, dialogo_confirmar_encerramento, dialogo_bloqueio])
 
     # ==========================================
@@ -511,16 +520,17 @@ def main(page: ft.Page):
     def mudar_aba(e):
         idx = e.control.selected_index
         tela_detalhes.visible = False
+        page.app_bar.leading = icone_logo
+        page.app_bar.leading_width = 50
+        
         if idx == 0:
             carregar_listagem()
             tela_listagem.visible = True
             tela_adicionar.visible = False
-            page.app_bar.leading = ft.Icon(ft.Icons.GRID_VIEW, color="red")
             page.app_bar.title = ft.Text("Listagem", weight="bold")
         else:
             tela_listagem.visible = False
             tela_adicionar.visible = True
-            page.app_bar.leading = ft.Icon(ft.Icons.FACE, color="pink")
             page.app_bar.title = ft.Text("Adicionar", weight="bold")
         page.update()
 
@@ -535,7 +545,7 @@ def main(page: ft.Page):
     )
 
     # ==========================================
-    # PROTEÇÃO DO BOTÃO VOLTAR DO ANDROID (2 TOQUES PARA SAIR)
+    # PROTEÇÃO DO BOTÃO VOLTAR (2 TOQUES)
     # ==========================================
     def gerenciar_botao_voltar(e):
         if tela_detalhes.visible:
@@ -544,7 +554,6 @@ def main(page: ft.Page):
 
         agora = time.time()
         if agora - ultimo_clique_voltar[0] < 2.0:
-            # Pressionou 2 vezes em menos de 2 segundos: fecha a janela
             page.window.close()
         else:
             ultimo_clique_voltar[0] = agora
@@ -557,4 +566,5 @@ def main(page: ft.Page):
     carregar_listagem()
     page.add(tela_adicionar, tela_listagem, tela_detalhes)
 
-ft.app(target=main)
+# Registra a pasta assets no motor do Flet
+ft.app(target=main, assets_dir="assets")
