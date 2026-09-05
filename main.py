@@ -139,7 +139,7 @@ def main(page: ft.Page):
     )
 
     # ==========================================
-    # DIÁLOGOS DE SAÍDA E SALAS (AGORA USANDO PAGE.OPEN)
+    # DIÁLOGOS DE SAÍDA E SALAS
     # ==========================================
     texto_botao_sala = ft.Text(f"👥 {escala_sala[0]}", size=12, weight="bold")
 
@@ -226,13 +226,13 @@ def main(page: ft.Page):
     # ==========================================
     btn_foto = ft.OutlinedButton(
         content=ft.Text("Tirar foto", color="black"), 
-        width=320, 
+        width=340, 
         height=45,
         on_click=abrir_camera_entrada
     )
-    campo_nome_crianca = ft.TextField(label="Nome da criança", width=320, border_radius=6)
-    campo_nome_responsavel = ft.TextField(label="Nome do responsável", width=320, border_radius=6)
-    campo_wpp_responsavel = ft.TextField(label="Wpp do responsável", width=320, border_radius=6, keyboard_type="phone")
+    campo_nome_crianca = ft.TextField(label="Nome da criança", width=340, border_radius=6)
+    campo_nome_responsavel = ft.TextField(label="Nome do responsável", width=340, border_radius=6)
+    campo_wpp_responsavel = ft.TextField(label="Wpp do responsável", width=340, border_radius=6, keyboard_type="phone")
 
     def fechar_e_limpar_formulario(e=None):
         page.close(dialogo_sucesso)
@@ -427,8 +427,16 @@ def main(page: ft.Page):
         page.go("/detalhes")
 
     # ==========================================
-    # LISTAGEM EM GRADE
+    # LISTAGEM EM GRADE COM PESQUISA
     # ==========================================
+    campo_pesquisa = ft.TextField(
+        label="Pesquisar...",
+        width=340,
+        border_radius=6,
+        prefix_icon=ft.Icons.SEARCH,
+        on_change=lambda e: carregar_listagem(e.control.value)
+    )
+
     grid_criancas = ft.GridView(
         expand=True,
         runs_count=2,
@@ -440,13 +448,22 @@ def main(page: ft.Page):
 
     txt_sem_criancas = ft.Text("Nenhuma criança listada", color="grey", size=14, visible=False)
 
-    def carregar_listagem():
+    def carregar_listagem(termo_busca=""):
         grid_criancas.controls.clear()
         sala_atual = escala_sala[0]
         
         conn = sqlite3.connect("refukids.db")
         cursor = conn.cursor()
-        cursor.execute('SELECT id, nome_crianca, nome_responsavel, whatsapp, senha, sala, foto_entrada, status_entregue FROM criancas WHERE sala = ?', (sala_atual,))
+        
+        if termo_busca:
+            cursor.execute('''
+                SELECT id, nome_crianca, nome_responsavel, whatsapp, senha, sala, foto_entrada, status_entregue 
+                FROM criancas 
+                WHERE sala = ? AND (nome_crianca LIKE ? OR nome_responsavel LIKE ?)
+            ''', (sala_atual, f'%{termo_busca}%', f'%{termo_busca}%'))
+        else:
+            cursor.execute('SELECT id, nome_crianca, nome_responsavel, whatsapp, senha, sala, foto_entrada, status_entregue FROM criancas WHERE sala = ?', (sala_atual,))
+            
         registros = cursor.fetchall()
         conn.close()
 
@@ -483,6 +500,8 @@ def main(page: ft.Page):
                 grid_criancas.controls.append(card)
         page.update()
 
+    page.overlay.extend([dialogo_sucesso, dialogo_entrega, dialogo_salas, dialogo_confirmar_encerramento, dialogo_bloqueio])
+
     # Telas de Conteúdo Principais
     container_adicionar = ft.Column(
         horizontal_alignment="center",
@@ -497,7 +516,7 @@ def main(page: ft.Page):
             ft.Container(height=25),
             ft.OutlinedButton(
                 content=ft.Text("Salvar", color="black"), 
-                width=320, 
+                width=340, 
                 height=45, 
                 on_click=salvar_dados
             ),
@@ -508,7 +527,9 @@ def main(page: ft.Page):
         horizontal_alignment="center",
         expand=True,
         controls=[
-            ft.Container(height=10),
+            ft.Container(height=5),
+            campo_pesquisa,
+            ft.Container(height=5),
             txt_sem_criancas,
             grid_criancas,
         ]
@@ -523,6 +544,7 @@ def main(page: ft.Page):
         salvar_configuracao("aba_atual", str(idx))
         
         if idx == 0:
+            campo_pesquisa.value = ""
             carregar_listagem()
             appbar_principal.title = ft.Text("Listagem", weight="bold")
         else:
@@ -581,7 +603,7 @@ def main(page: ft.Page):
         page.update()
 
     def view_pop(e):
-        # Quando arrasta da borda na tela de detalhes, ele volta para listagem e não sai do app!
+        # Quando arrasta da borda na tela de detalhes, ele volta para listagem e não sai do app
         page.go("/")
 
     page.on_route_change = gerenciar_rota
@@ -590,5 +612,5 @@ def main(page: ft.Page):
     carregar_listagem()
     page.go("/")
 
-# Importante: A pasta assets precisa estar declarada aqui!
+# A pasta assets precisa estar declarada aqui
 ft.app(target=main, assets_dir="assets")
